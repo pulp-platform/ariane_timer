@@ -1,5 +1,0 @@
-ariane_timer:
-  files: [
-    synch.sv,
-    ariane_timer.sv,
-  ]

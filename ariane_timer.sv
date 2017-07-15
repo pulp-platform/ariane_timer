@@ -189,9 +189,9 @@ module ariane_timer #(
     always_ff @(posedge HCLK or negedge HRESETn) begin
         if(~HRESETn) begin
             CS         <= WAIT_HIGH;
-            count_q    <= 0;
-            mtime_q    <= 64'0;
-            mtimecmp_q <= '0;
+            count_q    <= 'b0;
+            mtime_q    <= 64'b0;
+            mtimecmp_q <= 'b0;
         end else begin
             CS         <= NS;
             count_q    <= count_n;
