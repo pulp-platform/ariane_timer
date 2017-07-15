@@ -20,20 +20,14 @@
 
 // Platforms provide a real-time counter, exposed as a memory-mapped machine-mode register, mtime. mtime must run at
 // constant frequency, and the platform must provide a mechanism for determining the timebase of mtime.
-//
-// The mtime register has a 64-bit precision on all RV32, RV64, and RV128 systems. Platforms provide a 64-bit
-// memory-mapped machine-mode timer compare register (mtimecmp), which causes a timer interrupt to be posted when the
-// mtime register contains a value greater than or equal (mtime >= mtimecmp) to the value in the mtimecmp register.
-// The interrupt remains posted until it is cleared by writing the mtimecmp register. The interrupt will only be taken
-// if interrupts are enabled and the MTIE bit is set in the mie register.
 
 module ariane_timer #(
     parameter int unsigned APB_ADDR_WIDTH = 12,  //APB slaves are 4KB by default
     parameter int unsigned NR_CORES = 1 // Number of cores therefore also the number of timecmp registers and timer interrupts
 )(
     // APB Slave
-    input  logic                      HCLK,            // Clock
-    input  logic                      HRESETn,         // Asynchronous reset active low
+    input  logic                      HCLK,     // Clock
+    input  logic                      HRESETn,  // Asynchronous reset active low
     input  logic [APB_ADDR_WIDTH-1:0] PADDR,
     input  logic               [63:0] PWDATA,
     input  logic                      PWRITE,
@@ -43,31 +37,88 @@ module ariane_timer #(
     output logic                      PREADY,
     output logic                      PSLVERR,
 
-    input  logic                      rtc_i,            // Real-time clock in (usually 32.768 kHz)
-    output logic               [63:0] time_o,           // Global Time out, this is the time-base of the whole SoC
-    output logic                      timer_interrupt_o // Timer interrupt
+    input  logic                      rtc_i,    // Real-time clock in (usually 32.768 kHz)
+    output logic               [63:0] time_o,   // Global Time out, this is the time-base of the whole SoC
+    output logic                      irq_o     // Timer interrupt
 );
     // number of cycles the RTC signal has to be stable, if the main frequency is very slow you might
     // consider decreasing the number of cycles you require it to be stable.
     localparam int unsigned STABLE_CYCLES = 5;
+    // register offset
+    localparam logic [1:0] REG_CMP  = 2'h1;
+    localparam logic [1:0] REG_TIME = 2'h3;
+    // bit 11 and 10 are determining the address offset
+    logic [1:0] register_address = PADDR[11:10];
     // cycle counter
     logic [$clog2(STABLE_CYCLES)-1:0] count_n, count_q;
     // actual registers
-    logic [63:0]         mtime_n, mtime_q;
-    logic [NR_CORES-1:0] mtimecmp_n, mtimecmp_q;
+    logic [63:0]               mtime_n, mtime_q;
+    logic [NR_CORES-1:0][63:0] mtimecmp_n, mtimecmp_q;
 
     // increase the timer
-    logic                increase_timer;
-    // synchronized RTC signal
-    logic                rtc_synch;
-    // directly output the mtime_q register - this needs synchronization (but in the core).
+    logic increase_timer;
 
+    // directly output the mtime_q register - this needs synchronization (but in the core).
     assign time_o = mtime_q;
 
     // -----------------------------
-    // APB Logic
+    // APB and Update Logic
     // -----------------------------
+    // APB register write logic
+    always_comb begin
+        mtime_n    = mtime_q;
+        mtimecmp_n = mtimecmp_q;
 
+        // RTC says we should increase the timer
+        if (increase_timer)
+            mtime_n = mtime_q + 1;
+
+        // written from APB bus - gets priority
+        if (PSEL && PENABLE && PWRITE) begin
+
+            case (register_address)
+                REG_TIME:
+                    mtime_n = PWDATA;
+
+                REG_CMP:
+                    mtimecmp_n[$unsigned(PADDR[NR_CORES-1+3:3])] = PWDATA;
+                default:;
+            endcase
+        end
+    end
+
+    // APB register read logic
+    always_comb begin
+        PRDATA = 'b0;
+
+        if (PSEL && PENABLE && !PWRITE)
+        begin
+
+            case (register_address)
+                REG_TIME:
+                    PRDATA = mtime_q;
+
+                REG_CMP:
+                    PRDATA = mtimecmp_q[$unsigned(PADDR[NR_CORES-1+3:3])];
+                default:;
+            endcase
+        end
+    end
+
+    // -----------------------------
+    // IRQ Generation
+    // -----------------------------
+    // The mtime register has a 64-bit precision on all RV32, RV64, and RV128 systems. Platforms provide a 64-bit
+    // memory-mapped machine-mode timer compare register (mtimecmp), which causes a timer interrupt to be posted when the
+    // mtime register contains a value greater than or equal (mtime >= mtimecmp) to the value in the mtimecmp register.
+    // The interrupt remains posted until it is cleared by writing the mtimecmp register. The interrupt will only be taken
+    // if interrupts are enabled and the MTIE bit is set in the mie register.
+    always_comb begin : irq_gen
+        if (mtime_q >= mtimecmp_q)
+            irq_o = 1'b1;
+        else
+            irq_o = 1'b0;
+    end
     // -----------------------------
     // RTC time tracking facilities
     // -----------------------------
@@ -80,9 +131,10 @@ module ariane_timer #(
     // 3. If this process detects a stable clock signal it asserts the increase_timer signal which will increase
     //    the mtime register accordingly ~> increase_timer should be high for exactly one cycle.
     //
+    // synchronized RTC signal
+    logic rtc_synch;
     // Ad (1):
     synch synch_i (.clk_i(HCLK), .rst_ni(HRESETn), .a_i(rtc_i), .z_o(rtc_synch));
-
     // wait for the next rising edge, wait for the next falling edge, start counting or give the increase_timer signal
     enum logic [1:0] {WAIT_HIGH, WAIT_LOW, COUNT, INCREASE_TIMER} CS, NS;
 
