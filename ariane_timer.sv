@@ -47,16 +47,102 @@ module ariane_timer #(
     output logic               [63:0] time_o,           // Global Time out, this is the time-base of the whole SoC
     output logic                      timer_interrupt_o // Timer interrupt
 );
+    // number of cycles the RTC signal has to be stable, if the main frequency is very slow you might
+    // consider decreasing the number of cycles you require it to be stable.
+    localparam int unsigned STABLE_CYCLES = 5;
+    // cycle counter
+    logic [$clog2(STABLE_CYCLES)-1:0] count_n, count_q;
+    // actual registers
     logic [63:0]         mtime_n, mtime_q;
     logic [NR_CORES-1:0] mtimecmp_n, mtimecmp_q;
 
+    // increase the timer
+    logic                increase_timer;
+    // synchronized RTC signal
+    logic                rtc_synch;
+    // directly output the mtime_q register - this needs synchronization (but in the core).
+
     assign time_o = mtime_q;
+
+    // -----------------------------
+    // APB Logic
+    // -----------------------------
+
+    // -----------------------------
+    // RTC time tracking facilities
+    // -----------------------------
+    // 1. Put the RTC input through a classic two stage synchronizer to filter out any
+    //    metastability effects (or at least make them unlikely :-))
+    // 2. Count the number of cycles the signal is high, this should ensure that the
+    //    update of the timer register is consistent (e.g.: it is happening exactly once/RTC cycle) and
+    //    and not more often because of slow signal ramps. You have to imagine that we are going to sample this signal
+    //    with a couple of hundred MHz while the RTC signal is only in the regime of kHz.
+    // 3. If this process detects a stable clock signal it asserts the increase_timer signal which will increase
+    //    the mtime register accordingly ~> increase_timer should be high for exactly one cycle.
+    //
+    // Ad (1):
+    synch synch_i (.clk_i(HCLK), .rst_ni(HRESETn), .a_i(rtc_i), .z_o(rtc_synch));
+
+    // wait for the next rising edge, wait for the next falling edge, start counting or give the increase_timer signal
+    enum logic [1:0] {WAIT_HIGH, WAIT_LOW, COUNT, INCREASE_TIMER} CS, NS;
+
+    always_comb begin : rtc_update
+        increase_timer = 1'b0;
+        NS             = CS;
+        count_n        = count_q;
+
+        // Ad (2):
+        case (CS)
+            // wait for a high RTC signal
+            WAIT_HIGH: begin
+                if (rtc_synch == 1'b1) begin
+                    // the RTC is high, start counting
+                    NS = COUNT;
+                    // reset the cycle counter
+                    count_n = 0;
+                end
+                // if it is low, just wait here
+            end
+            // wait for a low RTC signal
+            WAIT_LOW: begin
+                if (rtc_synch == 1'b0) begin
+                    NS = WAIT_HIGH;
+                end
+            end
+            // start counting,
+            COUNT: begin
+                // if we got the amount of stable cycles we requested ~> increase the timer
+                if (count_q == STABLE_CYCLES[$clog2(STABLE_CYCLES)-1:0])
+                    NS = INCREASE_TIMER;
+
+                // if the RTC became low again wait for the high signal in the WAIT_HIGH state
+                if (rtc_synch == 1'b0)
+                    NS = WAIT_HIGH;
+                else // if the RTC signal is high increase the counter
+                    count_n = count_q + 1;
+            end
+
+            // Ad (3):
+            INCREASE_TIMER: begin
+                increase_timer = 1'b1;
+                // wait again for the signal to become low
+                NS = WAIT_LOW;
+            end
+
+            default:;
+        endcase
+    end
+
     // Registers
-    always_ff @(posedge clk or negedge rst_n) begin
-        if(~rst_n) begin
+    always_ff @(posedge HCLK or negedge HRESETn) begin
+        if(~HRESETn) begin
+            CS         <= WAIT_HIGH;
+            count_q    <= 0;
             mtime_q    <= 64'0;
             mtimecmp_q <= '0;
         end else begin
+            CS         <= NS;
+            count_q    <= count_n;
             mtime_q    <= mtime_n;
             mtimecmp_q <= mtimecmp_n;
         end
