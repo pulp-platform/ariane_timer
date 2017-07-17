@@ -22,24 +22,20 @@
 // constant frequency, and the platform must provide a mechanism for determining the timebase of mtime.
 
 module ariane_timer #(
-    parameter int unsigned APB_ADDR_WIDTH = 12,  //APB slaves are 4KB by default
+    parameter int unsigned AXI_ADDR_WIDTH = 64,
+    parameter int unsigned AXI_DATA_WIDTH = 64,
+    parameter int unsigned AXI_ID_WIDTH   = 10,
     parameter int unsigned NR_CORES = 1 // Number of cores therefore also the number of timecmp registers and timer interrupts
 )(
     // APB Slave
-    input  logic                      HCLK,     // Clock
-    input  logic                      HRESETn,  // Asynchronous reset active low
-    input  logic [APB_ADDR_WIDTH-1:0] PADDR,
-    input  logic               [63:0] PWDATA,
-    input  logic                      PWRITE,
-    input  logic                      PSEL,
-    input  logic                      PENABLE,
-    output logic               [63:0] PRDATA,
-    output logic                      PREADY,
-    output logic                      PSLVERR,
+    input  logic           clk_i,     // Clock
+    input  logic           rst_ni,  // Asynchronous reset active low
 
-    input  logic                      rtc_i,    // Real-time clock in (usually 32.768 kHz)
-    output logic               [63:0] time_o,   // Global Time out, this is the time-base of the whole SoC
-    output logic                      irq_o     // Timer interrupt
+    AXI_BUS.Slave          slave,
+
+    input  logic           rtc_i,    // Real-time clock in (usually 32.768 kHz)
+    output logic    [63:0] time_o,   // Global Time out, this is the time-base of the whole SoC
+    output logic           irq_o     // Timer interrupt
 );
     // number of cycles the RTC signal has to be stable, if the main frequency is very slow you might
     // consider decreasing the number of cycles you require it to be stable.
@@ -47,8 +43,15 @@ module ariane_timer #(
     // register offset
     localparam logic [1:0] REG_CMP  = 2'h1;
     localparam logic [1:0] REG_TIME = 2'h3;
+    // signals from AXI 4 Lite
+    logic [AXI_ADDR_WIDTH-1:0] address;
+    logic                      en;
+    logic                      we;
+    logic [63:0] wdata;
+    logic [63:0] rdata;
+
     // bit 11 and 10 are determining the address offset
-    logic [1:0] register_address = PADDR[11:10];
+    logic [1:0] register_address = address[11:10];
     // cycle counter
     logic [$clog2(STABLE_CYCLES)-1:0] count_n, count_q;
     // actual registers
@@ -62,7 +65,23 @@ module ariane_timer #(
     assign time_o = mtime_q;
 
     // -----------------------------
-    // APB and Update Logic
+    // AXI Interface Logic
+    // -----------------------------
+    axi_lite_interface #(
+        .AXI_ADDR_WIDTH ( AXI_ADDR_WIDTH ),
+        .AXI_DATA_WIDTH ( AXI_DATA_WIDTH ),
+        .AXI_ID_WIDTH   ( AXI_ID_WIDTH    )
+    ) axi_lite_interface_i (
+        .address_o ( address ),
+        .en_o      ( en      ),
+        .we_o      ( we      ),
+        .data_i    ( wdata   ),
+        .data_o    ( rdata   ),
+        .*
+    );
+
+    // -----------------------------
+    // Register Update Logic
     // -----------------------------
     // APB register write logic
     always_comb begin
@@ -74,14 +93,13 @@ module ariane_timer #(
             mtime_n = mtime_q + 1;
 
         // written from APB bus - gets priority
-        if (PSEL && PENABLE && PWRITE) begin
-
+        if (en && we) begin
             case (register_address)
                 REG_TIME:
-                    mtime_n = PWDATA;
+                    mtime_n = wdata;
 
                 REG_CMP:
-                    mtimecmp_n[$unsigned(PADDR[NR_CORES-1+3:3])] = PWDATA;
+                    mtimecmp_n[$unsigned(PADDR[NR_CORES-1+3:3])] = wdata;
                 default:;
             endcase
         end
@@ -89,17 +107,15 @@ module ariane_timer #(
 
     // APB register read logic
     always_comb begin
-        PRDATA = 'b0;
+        rdata = 'b0;
 
-        if (PSEL && PENABLE && !PWRITE)
-        begin
-
+        if (en && !we) begin
             case (register_address)
                 REG_TIME:
-                    PRDATA = mtime_q;
+                    rdata = mtime_q;
 
                 REG_CMP:
-                    PRDATA = mtimecmp_q[$unsigned(PADDR[NR_CORES-1+3:3])];
+                    rdata = mtimecmp_q[$unsigned(PADDR[NR_CORES-1+3:3])];
                 default:;
             endcase
         end
@@ -134,7 +150,7 @@ module ariane_timer #(
     // synchronized RTC signal
     logic rtc_synch;
     // Ad (1):
-    synch synch_i (.clk_i(HCLK), .rst_ni(HRESETn), .a_i(rtc_i), .z_o(rtc_synch));
+    synch synch_i (.clk_i(clk_i), .rst_ni(rst_ni), .a_i(rtc_i), .z_o(rtc_synch));
     // wait for the next rising edge, wait for the next falling edge, start counting or give the increase_timer signal
     enum logic [1:0] {WAIT_HIGH, WAIT_LOW, COUNT, INCREASE_TIMER} CS, NS;
 
@@ -186,8 +202,8 @@ module ariane_timer #(
     end
 
     // Registers
-    always_ff @(posedge HCLK or negedge HRESETn) begin
-        if(~HRESETn) begin
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+        if(~rst_ni) begin
             CS         <= WAIT_HIGH;
             count_q    <= 'b0;
             mtime_q    <= 64'b0;
@@ -199,4 +215,16 @@ module ariane_timer #(
             mtimecmp_q <= mtimecmp_n;
         end
     end
+
+    // -------------
+    // Assertions
+    // --------------
+    `ifndef SYNTHESIS
+    `ifndef VERILATOR
+    // Static assertion check for appropriate bus width
+        initial begin
+            assert (AXI_DATA_WIDTH == 64) else $fatal("Timer needs to interface with a 64 bit bus, everything else is not supported");
+        end
+    `endif
+    `endif
 endmodule
