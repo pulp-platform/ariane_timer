@@ -99,7 +99,7 @@ module ariane_timer #(
                     mtime_n = wdata;
 
                 REG_CMP:
-                    mtimecmp_n[$unsigned(PADDR[NR_CORES-1+3:3])] = wdata;
+                    mtimecmp_n[$unsigned(address[NR_CORES-1+3:3])] = wdata;
                 default:;
             endcase
         end
@@ -115,7 +115,7 @@ module ariane_timer #(
                     rdata = mtime_q;
 
                 REG_CMP:
-                    rdata = mtimecmp_q[$unsigned(PADDR[NR_CORES-1+3:3])];
+                    rdata = mtimecmp_q[$unsigned(address[NR_CORES-1+3:3])];
                 default:;
             endcase
         end

@@ -79,7 +79,7 @@ module axi_lite_interface #(
                 if (slave.aw_valid && slave.w_valid) begin
                     NS = WRITE;
                     // save address
-                    address_o = slave.aw_address;
+                    address_o = slave.aw_addr;
                     data_o    = slave.w_data;
                     en_o      = 1'b1;
                     we_o      = 1'b1;
