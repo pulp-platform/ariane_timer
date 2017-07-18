@@ -46,11 +46,13 @@ module axi_lite_interface #(
     // send back the transaction id we've latched
     assign slave.r_id = trans_id_q;
     assign slave.b_id = trans_id_q;
-    // set w_last and r_last to one as defined by the AXI4 - Lite standard
-    assign slave.w_last = 1'b1;
+    // set r_last to one as defined by the AXI4 - Lite standard
     assign slave.r_last = 1'b1;
     // we do not support any errors so set response flag to all zeros
     assign slave.b_resp = 2'b0;
+    assign slave.r_resp = 2'b0;
+    // output data which we want to write to the slave
+    assign data_o = slave.w_data;
     // ------------------------
     // AXI4-Lite State Machine
     // ------------------------
@@ -80,7 +82,6 @@ module axi_lite_interface #(
                     NS = WRITE;
                     // save address
                     address_o = slave.aw_addr;
-                    data_o    = slave.w_data;
                     en_o      = 1'b1;
                     we_o      = 1'b1;
                     // save the transaction id for reflection

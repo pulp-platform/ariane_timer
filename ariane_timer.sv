@@ -51,7 +51,8 @@ module ariane_timer #(
     logic [63:0] rdata;
 
     // bit 11 and 10 are determining the address offset
-    logic [1:0] register_address = address[11:10];
+    logic [1:0] register_address;
+    assign register_address = address[11:10];
     // cycle counter
     logic [$clog2(STABLE_CYCLES)-1:0] count_n, count_q;
     // actual registers
@@ -75,8 +76,8 @@ module ariane_timer #(
         .address_o ( address ),
         .en_o      ( en      ),
         .we_o      ( we      ),
-        .data_i    ( wdata   ),
-        .data_o    ( rdata   ),
+        .data_i    ( rdata   ),
+        .data_o    ( wdata   ),
         .*
     );
 
