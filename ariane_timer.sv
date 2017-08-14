@@ -131,7 +131,8 @@ module ariane_timer #(
     // The interrupt remains posted until it is cleared by writing the mtimecmp register. The interrupt will only be taken
     // if interrupts are enabled and the MTIE bit is set in the mie register.
     always_comb begin : irq_gen
-        if (mtime_q >= mtimecmp_q)
+        // check that the mtime cmp register is set to a meaningful value
+        if (mtimecmp_q != 0 && mtime_q >= mtimecmp_q)
             irq_o = 1'b1;
         else
             irq_o = 1'b0;

@@ -35,7 +35,7 @@ module axi_lite_interface #(
 );
 
     // The RLAST signal is not required, and is considered asserted for every transfer on the read data channel.
-    enum logic [1:0] { IDLE, READ, WRITE } CS, NS;
+    enum logic [1:0] { IDLE, READ, WRITE, WRITE_B} CS, NS;
     // save the trans id, we will need it for reflection otherwise we are not plug compatible to the AXI standard
     logic [AXI_ID_WIDTH-1:0]   trans_id_n, trans_id_q;
     // address register
@@ -78,14 +78,16 @@ module axi_lite_interface #(
             // we are ready to accept a new request
             IDLE: begin
                 // we've git a valid write request, we also know that we have asserted the aw_ready
-                if (slave.aw_valid && slave.w_valid) begin
+                if (slave.aw_valid) begin
+
+                    slave.aw_ready = 1'b1;
+                    // this costs performance but the interconnect does not obey the AXI standard
                     NS = WRITE;
                     // save address
-                    address_o = slave.aw_addr;
-                    en_o      = 1'b1;
-                    we_o      = 1'b1;
+                    address_n = slave.aw_addr;
                     // save the transaction id for reflection
                     trans_id_n = slave.aw_id;
+
                 // we've got a valid read request, we also know that we have asserted the ar_ready
                 end else if (slave.ar_valid) begin
                     NS = READ;
@@ -94,13 +96,14 @@ module axi_lite_interface #(
                     address_o = slave.ar_addr;
                     // save the transaction id for reflection
                     trans_id_n = slave.ar_id;
-                    // enable the ram-like
-                    en_o       = 1'b1;
+
                 end
             end
             // We've got a read request at least one cycle earlier
             // so data_i will already contain the data we'd like tor read
             READ: begin
+                // enable the ram-like
+                en_o       = 1'b1;
                 // we are not ready for another request here
                 slave.ar_ready = 1'b0;
                 // further assert the correct address
@@ -114,14 +117,25 @@ module axi_lite_interface #(
             // We've got a write request at least one cycle earlier
             // wait here for the data
             WRITE: begin
-                // we are not ready for another request here
-                slave.ar_ready = 1'b0;
+                if (slave.w_valid) begin
+                    // we are not ready for another request here
+                    slave.ar_ready = 1'b0;
+                    slave.w_ready = 1'b1;
+                    // use the latched address
+                    address_o = address_q;
+                    en_o = 1'b1;
+                    we_o = 1'b1;
+                    // close this request
+                    NS = WRITE_B;
+                end
+            end
+
+            WRITE_B: begin
                 slave.b_valid  = 1'b1;
                 // we've already performed the write here so wait for the ready signal
                 if (slave.b_ready)
                     NS = IDLE;
             end
-
             default:;
 
         endcase
@@ -149,10 +163,10 @@ module axi_lite_interface #(
     `ifndef SYNTHESIS
     `ifndef VERILATOR
         // check that burst length is just one
-        assert property (@(posedge clk_i) slave.ar_valid |->  ((slave.ar_len == 8'b1) && (slave.ar_size == AXI_DATA_WIDTH/8)))
+        assert property (@(posedge clk_i) slave.ar_valid |->  ((slave.ar_len == 8'b0) && (slave.ar_size == $clog2(AXI_ADDR_WIDTH/8))))
         else begin $error("AXI Lite does not support bursts larger than 1 or byte length unequal to the native bus size"); $stop(); end
         // do the same for the write channel
-        assert property (@(posedge clk_i) slave.aw_valid |->  ((slave.aw_len == 8'b1) && (slave.aw_size == AXI_DATA_WIDTH/8)))
+        assert property (@(posedge clk_i) slave.aw_valid |->  ((slave.aw_len == 8'b0) && (slave.aw_size == $clog2(AXI_ADDR_WIDTH/8))))
         else begin $error("AXI Lite does not support bursts larger than 1 or byte length unequal to the native bus size"); $stop(); end
     `endif
     `endif
