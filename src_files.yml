@@ -1,6 +1,6 @@
 ariane_timer:
   files: [
-    synch.sv,
+    synch_edge.sv,
     axi_lite_interface.sv,
     ariane_timer.sv,
   ]

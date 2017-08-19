@@ -37,9 +37,6 @@ module ariane_timer #(
     output logic    [63:0] time_o,   // Global Time out, this is the time-base of the whole SoC
     output logic           irq_o     // Timer interrupt
 );
-    // number of cycles the RTC signal has to be stable, if the main frequency is very slow you might
-    // consider decreasing the number of cycles you require it to be stable.
-    localparam int unsigned STABLE_CYCLES = 5;
     // register offset
     localparam logic [1:0] REG_CMP  = 2'h1;
     localparam logic [1:0] REG_TIME = 2'h3;
@@ -53,8 +50,6 @@ module ariane_timer #(
     // bit 11 and 10 are determining the address offset
     logic [1:0] register_address;
     assign register_address = address[11:10];
-    // cycle counter
-    logic [$clog2(STABLE_CYCLES)-1:0] count_n, count_q;
     // actual registers
     logic [63:0]               mtime_n, mtime_q;
     logic [NR_CORES-1:0][63:0] mtimecmp_n, mtimecmp_q;
@@ -140,79 +135,23 @@ module ariane_timer #(
     // -----------------------------
     // RTC time tracking facilities
     // -----------------------------
-    // 1. Put the RTC input through a classic two stage synchronizer to filter out any
+    // 1. Put the RTC input through a classic two stage edge-triggered synchronizer to filter out any
     //    metastability effects (or at least make them unlikely :-))
-    // 2. Count the number of cycles the signal is high, this should ensure that the
-    //    update of the timer register is consistent (e.g.: it is happening exactly once/RTC cycle) and
-    //    and not more often because of slow signal ramps. You have to imagine that we are going to sample this signal
-    //    with a couple of hundred MHz while the RTC signal is only in the regime of kHz.
-    // 3. If this process detects a stable clock signal it asserts the increase_timer signal which will increase
-    //    the mtime register accordingly ~> increase_timer should be high for exactly one cycle.
-    //
-    // synchronized RTC signal
-    logic rtc_synch;
-    // Ad (1):
-    synch synch_i (.clk_i(clk_i), .rst_ni(rst_ni), .a_i(rtc_i), .z_o(rtc_synch));
-    // wait for the next rising edge, wait for the next falling edge, start counting or give the increase_timer signal
-    enum logic [1:0] {WAIT_HIGH, WAIT_LOW, COUNT, INCREASE_TIMER} CS, NS;
-
-    always_comb begin : rtc_update
-        increase_timer = 1'b0;
-        NS             = CS;
-        count_n        = count_q;
-
-        // Ad (2):
-        case (CS)
-            // wait for a high RTC signal
-            WAIT_HIGH: begin
-                if (rtc_synch == 1'b1) begin
-                    // the RTC is high, start counting
-                    NS = COUNT;
-                    // reset the cycle counter
-                    count_n = 0;
-                end
-                // if it is low, just wait here
-            end
-            // wait for a low RTC signal
-            WAIT_LOW: begin
-                if (rtc_synch == 1'b0) begin
-                    NS = WAIT_HIGH;
-                end
-            end
-            // start counting,
-            COUNT: begin
-                // if we got the amount of stable cycles we requested ~> increase the timer
-                if (count_q == STABLE_CYCLES[$clog2(STABLE_CYCLES)-1:0])
-                    NS = INCREASE_TIMER;
-
-                // if the RTC became low again wait for the high signal in the WAIT_HIGH state
-                if (rtc_synch == 1'b0)
-                    NS = WAIT_HIGH;
-                else // if the RTC signal is high increase the counter
-                    count_n = count_q + 1;
-            end
-
-            // Ad (3):
-            INCREASE_TIMER: begin
-                increase_timer = 1'b1;
-                // wait again for the signal to become low
-                NS = WAIT_LOW;
-            end
-
-            default:;
-        endcase
-    end
+    synch_edge i_synch_edge (
+        .en_i            ( 1'b1           ),
+        .a_i             ( rtc_i          ),
+        .rising_edge_o   ( increase_timer ),
+        .falling_edge_o  (                ), // left open
+        .serial_o        (                ),
+        .*
+    );
 
     // Registers
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if(~rst_ni) begin
-            CS         <= WAIT_HIGH;
-            count_q    <= 'b0;
             mtime_q    <= 64'b0;
             mtimecmp_q <= 'b0;
         end else begin
-            CS         <= NS;
-            count_q    <= count_n;
             mtime_q    <= mtime_n;
             mtimecmp_q <= mtimecmp_n;
         end
