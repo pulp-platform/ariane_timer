@@ -132,6 +132,8 @@ module ariane_timer #(
         else
             irq_o = 1'b0;
     end
+
+    logic half_clock;
     // -----------------------------
     // RTC time tracking facilities
     // -----------------------------
@@ -139,7 +141,7 @@ module ariane_timer #(
     //    metastability effects (or at least make them unlikely :-))
     synch_edge i_synch_edge (
         .en_i            ( 1'b1           ),
-        .a_i             ( rtc_i          ),
+        .a_i             ( half_clock     ),
         .rising_edge_o   ( increase_timer ),
         .falling_edge_o  (                ), // left open
         .serial_o        (                ),
@@ -151,9 +153,11 @@ module ariane_timer #(
         if(~rst_ni) begin
             mtime_q    <= 64'b0;
             mtimecmp_q <= 'b0;
+            half_clock <= 1'b0;
         end else begin
             mtime_q    <= mtime_n;
             mtimecmp_q <= mtimecmp_n;
+            half_clock <= ~half_clock;
         end
     end
 
