@@ -25,14 +25,15 @@ module ariane_timer #(
     parameter int unsigned AXI_ADDR_WIDTH = 64,
     parameter int unsigned AXI_DATA_WIDTH = 64,
     parameter int unsigned AXI_ID_WIDTH   = 10,
-    parameter int unsigned NR_CORES = 1 // Number of cores therefore also the number of timecmp registers and timer interrupts
+    parameter int unsigned NR_CORES        = 1 // Number of cores therefore also the number of timecmp registers and timer interrupts
 )(
     // APB Slave
-    input  logic           clk_i,     // Clock
+    input  logic           clk_i,   // Clock
     input  logic           rst_ni,  // Asynchronous reset active low
 
     AXI_BUS.Slave          slave,
 
+    input  logic           halted_i, // cores are halted, also halt timer
     input  logic           rtc_i,    // Real-time clock in (usually 32.768 kHz)
     output logic    [63:0] time_o,   // Global Time out, this is the time-base of the whole SoC
     output logic           irq_o     // Timer interrupt
@@ -85,7 +86,7 @@ module ariane_timer #(
         mtimecmp_n = mtimecmp_q;
 
         // RTC says we should increase the timer
-        if (increase_timer)
+        if (increase_timer && !halted_i)
             mtime_n = mtime_q + 1;
 
         // written from APB bus - gets priority
