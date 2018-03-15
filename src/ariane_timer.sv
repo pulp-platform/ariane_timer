@@ -134,12 +134,12 @@ module ariane_timer #(
     // -----------------------------
     // 1. Put the RTC input through a classic two stage edge-triggered synchronizer to filter out any
     //    metastability effects (or at least make them unlikely :-))
-    synch_edge i_synch_edge (
-        .en_i            ( 1'b1           ),
-        .a_i             ( rtc_i          ),
-        .rising_edge_o   ( increase_timer ),
-        .falling_edge_o  (                ), // left open
-        .serial_o        (                ),
+    synch_wedge i_synch_edge (
+        .en_i      ( 1'b1           ),
+        .serial_i  ( rtc_i          ),
+        .r_edge_o  ( increase_timer ),
+        .f_edge_o  (                ), // left open
+        .serial_o  (                ),
         .*
     );
 
