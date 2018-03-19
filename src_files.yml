@@ -1,6 +1,5 @@
 ariane_timer:
   files: [
-    synch_edge.sv,
-    axi_lite_interface.sv,
-    ariane_timer.sv,
+    src/axi_lite_interface.sv,
+    src/ariane_timer.sv,
   ]
